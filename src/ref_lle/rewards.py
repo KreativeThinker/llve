@@ -1,7 +1,7 @@
 import torch
 from abc import ABC, abstractmethod
-from skimage.metrics import peak_signal_noise_ratio, structural_similarity
 import numpy as np
+from .utils import to_grayscale
 
 
 class QualityScorer(ABC):
@@ -12,16 +12,8 @@ class QualityScorer(ABC):
 
 
 class ProxyQualityScorer(QualityScorer):
-    def __init__(self):
-        pass
-
     def score(self, image):
-        if isinstance(image, torch.Tensor):
-            image = image.cpu().numpy()
-
-        if image.ndim == 3:
-            image = np.mean(image, axis=0)
-
+        image = to_grayscale(image)
         h, w = image.shape
         center_h, center_w = h // 2, w // 2
         window_size = min(h, w) // 4
@@ -32,9 +24,7 @@ class ProxyQualityScorer(QualityScorer):
 
         contrast = np.std(window)
         brightness = np.mean(window)
-        score = contrast + 0.5 * brightness
-
-        return float(score)
+        return float(contrast + 0.5 * brightness)
 
 
 def amplitude_exposure_reward(zfc_current, zfc_target=2.5e5):

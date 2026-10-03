@@ -1,22 +1,24 @@
 import torch
 import torch.nn as nn
-from torch.distributions import Categorical
+from collections import deque
+from .utils import compute_entropy
 
 
-def compute_returns(rewards, values, gamma=0.95, n_steps=10):
-    returns = []
+def compute_returns(rewards, values, gamma=0.95):
+    if isinstance(rewards, torch.Tensor):
+        rewards = rewards.cpu().tolist()
+    if isinstance(values, torch.Tensor):
+        values = values.cpu().tolist()
+
+    ret = deque()
     gae = 0
     for t in reversed(range(len(rewards))):
-        if t == len(rewards) - 1:
-            next_value = 0
-        else:
-            next_value = values[t + 1]
-
+        next_value = values[t + 1] if t < len(values) - 1 else 0
         delta = rewards[t] + gamma * next_value - values[t]
         gae = delta + gamma * 0.95 * gae
-        returns.insert(0, gae + values[t])
+        ret.appendleft(gae + values[t])
 
-    return returns
+    return list(ret)
 
 
 class A3CWorker:
@@ -31,20 +33,15 @@ class A3CWorker:
         actions_flat = actions.reshape(-1)
         log_probs_flat = log_probs.reshape(-1)
 
-        states_flat = states.reshape(b * h * w)
-
         policy_logits, values = self.model(states)
         values = values.squeeze(-1)
 
-        returns = torch.tensor(compute_returns(rewards.cpu().tolist(), values.detach().cpu().tolist(), self.gamma), dtype=torch.float32)
-
+        returns = torch.tensor(compute_returns(rewards, values.detach()), dtype=torch.float32)
         advantages = returns - values.detach()
 
         policy_loss = -(log_probs_flat * advantages).mean()
         value_loss = 0.5 * (returns - values).pow(2).mean()
-
-        entropy = -(torch.softmax(policy_logits, dim=-1) * torch.log_softmax(policy_logits, dim=-1) + 1e-8).sum(dim=-1).mean()
-
+        entropy = compute_entropy(policy_logits)
         loss = policy_loss + value_loss - self.entropy_coef * entropy
 
         return loss, policy_loss, value_loss, entropy
@@ -52,14 +49,9 @@ class A3CWorker:
 
 def train_step(model, optimizer, state, action_map, reward, gamma=0.95, entropy_coef=0.01):
     optimizer.zero_grad()
-
     policy_logits, value = model(state)
 
-    if action_map.ndim == 2:
-        action_flat = action_map.reshape(-1)
-    else:
-        action_flat = action_map
-
+    action_flat = action_map.reshape(-1) if action_map.ndim > 1 else action_map
     log_softmax = torch.log_softmax(policy_logits, dim=-1)
     log_probs = log_softmax.gather(1, action_flat.unsqueeze(-1)).squeeze(-1)
 
@@ -68,9 +60,7 @@ def train_step(model, optimizer, state, action_map, reward, gamma=0.95, entropy_
 
     policy_loss = -(log_probs * advantage).mean()
     value_loss = 0.5 * advantage.pow(2).mean()
-
-    entropy = -(torch.softmax(policy_logits, dim=-1) * log_softmax + 1e-8).sum(dim=-1).mean()
-
+    entropy = compute_entropy(policy_logits)
     loss = policy_loss + value_loss - entropy_coef * entropy
 
     loss.backward()

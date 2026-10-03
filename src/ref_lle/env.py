@@ -10,24 +10,19 @@ class LowLightEnv:
         self.scorer = scorer or ProxyQualityScorer()
         self.max_steps = max_steps
         self.zfc_target = zfc_target
-        self.step_count = 0
 
-        if self.image_initial.ndim == 3:
-            self.image_current = self.image_initial.clone()
-        else:
-            self.image_current = self.image_initial.unsqueeze(0).clone()
+        if self.image_initial.ndim == 2:
+            self.image_initial = self.image_initial.unsqueeze(0)
 
-        self.amp_0, self.pha_0 = amplitude_phase_split(self.image_current)
-        self.amp_current = self.amp_0.clone()
+        self.amp_0, self.pha_0 = amplitude_phase_split(self.image_initial)
+        self.score_initial = self.scorer.score(self.image_initial)
+        self.reset()
 
     def reset(self):
         self.image_current = self.image_initial.clone()
-        self.amp_0, self.pha_0 = amplitude_phase_split(self.image_current)
         self.amp_current = self.amp_0.clone()
+        self.zfc_current = zero_frequency_component(self.amp_current)
         self.step_count = 0
-        return self._get_state()
-
-    def _get_state(self):
         return self.image_current.clone()
 
     def step(self, action_map):
@@ -42,23 +37,22 @@ class LowLightEnv:
         gain = torch.exp(alphas)
 
         self.amp_current = self.amp_0 * gain
-
         self.image_current = recombine(self.amp_current, self.pha_0)
         self.image_current = torch.clamp(self.image_current, 0, 1)
 
-        zfc_current = zero_frequency_component(self.amp_current)
+        self.zfc_current = zero_frequency_component(self.amp_current)
         reward = combined_reward(
             self.scorer,
             self.image_current,
             self.image_initial,
-            zfc_current[0],
+            self.zfc_current[0],
             self.zfc_target
         )
 
         self.step_count += 1
         done = self.step_count >= self.max_steps
 
-        return self._get_state(), reward, done
+        return self.image_current.clone(), reward, done
 
     def get_zfc(self):
-        return zero_frequency_component(self.amp_current)
+        return self.zfc_current
