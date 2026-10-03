@@ -1,0 +1,29 @@
+[project]
+name = "ref-lle"
+version = "0.1.0"
+description = "ReF-LLE: Personalized Low-Light Enhancement via Reference-Guided Deep RL"
+readme = "README.md"
+authors = [
+    { name = "Anumeya", email = "sagely2005eagle@gmail.com" }
+]
+requires-python = ">=3.13"
+dependencies = [
+    "matplotlib>=3.11.2",
+    "notebook>=7.6.3",
+    "numpy>=2.5.3",
+    "pandas>=3.0.6",
+    "pillow>=12.3.0",
+    "pytest>=9.1.1",
+    "scikit-image>=0.26.0",
+    "torch>=2.14.1",
+    "torchvision>=0.29.1",
+    "tqdm>=4.70.1",
+]
+
+[project.scripts]
+ref-lle-train = "ref_lle.train:main"
+ref-lle-infer = "ref_lle.infer:main"
+
+[build-system]
+requires = ["uv_build>=0.12.17,<0.13.0"]
+build-backend = "uv_build"
