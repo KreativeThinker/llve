@@ -40,12 +40,12 @@ def main():
     model.eval()
 
     input_tensor = torch.from_numpy(input_array)
-    env = LowLightEnv(input_tensor, scorer=ProxyQualityScorer(), max_steps=args.max_iterations, zfc_target=zfc_target)
+    env = LowLightEnv(input_tensor, scorer=ProxyQualityScorer(), max_steps=args.max_iterations, zfc_target=zfc_target, device=device)
     state = env.reset()
 
     for step in range(args.max_iterations):
         with torch.no_grad():
-            policy_logits, _ = model(state.to(device))
+            policy_logits, _ = model(state)
             policy = torch.softmax(policy_logits, dim=-1)
             action_dist = torch.distributions.Categorical(policy)
             action = action_dist.sample()

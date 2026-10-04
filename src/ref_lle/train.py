@@ -34,13 +34,13 @@ def main():
         low_image, normal_image = dataset[idx]
         low_image = low_image.to(device)
 
-        env = LowLightEnv(low_image, scorer=scorer, max_steps=config.max_episode_steps, zfc_target=config.zfc_target)
+        env = LowLightEnv(low_image, scorer=scorer, max_steps=config.max_episode_steps, zfc_target=config.zfc_target, device=device)
         state = env.reset()
 
         episode_reward = 0
         for step in range(config.steps_per_episode):
             with torch.no_grad():
-                policy_logits, _ = model(state.to(device))
+                policy_logits, _ = model(state)
                 policy = torch.softmax(policy_logits, dim=-1)
                 action_dist = torch.distributions.Categorical(policy)
                 action = action_dist.sample()
@@ -53,13 +53,13 @@ def main():
             next_state, reward, done = env.step(action_map)
 
             loss, p_loss, v_loss, ent = train_step(
-                model, optimizer, state.to(device), action_map.to(device),
+                model, optimizer, state, action_map,
                 torch.tensor(reward, dtype=torch.float32).to(device),
                 config.gamma, config.entropy_coef
             )
 
             episode_reward += reward
-            state = next_state.to(device)
+            state = next_state
 
             if done:
                 break
