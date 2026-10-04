@@ -35,7 +35,7 @@ def main():
         low_image = low_image.to(device)
 
         env = LowLightEnv(low_image, scorer=scorer, max_steps=config.max_episode_steps, zfc_target=config.zfc_target, device=device)
-        state = env.reset()
+        state = env.reset().to(device)
 
         episode_reward = 0
         for step in range(config.steps_per_episode):
@@ -59,7 +59,7 @@ def main():
             )
 
             episode_reward += reward
-            state = next_state
+            state = next_state.to(device)
 
             if done:
                 break

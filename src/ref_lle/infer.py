@@ -41,7 +41,7 @@ def main():
 
     input_tensor = torch.from_numpy(input_array)
     env = LowLightEnv(input_tensor, scorer=ProxyQualityScorer(), max_steps=args.max_iterations, zfc_target=zfc_target, device=device)
-    state = env.reset()
+    state = env.reset().to(device)
 
     for step in range(args.max_iterations):
         with torch.no_grad():
