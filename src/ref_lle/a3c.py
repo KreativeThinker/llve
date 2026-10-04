@@ -36,7 +36,8 @@ class A3CWorker:
         policy_logits, values = self.model(states)
         values = values.squeeze(-1)
 
-        returns = torch.tensor(compute_returns(rewards, values.detach()), dtype=torch.float32)
+        device = values.device
+        returns = torch.tensor(compute_returns(rewards, values.detach()), dtype=torch.float32, device=device)
         advantages = returns - values.detach()
 
         policy_loss = -(log_probs_flat * advantages).mean()
