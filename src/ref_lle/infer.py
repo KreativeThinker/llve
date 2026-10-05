@@ -22,19 +22,21 @@ def main():
 
     device = torch.device(args.device)
 
-    input_img = Image.open(args.input).convert("L")
+    input_img = Image.open(args.input).convert("RGB")
     input_array = np.array(input_img).astype(np.float32) / 255.0
+    input_array = np.transpose(input_array, (2, 0, 1))
 
     zfc_target = args.zfc_ref
     if args.ref:
-        ref_img = Image.open(args.ref).convert("L")
+        ref_img = Image.open(args.ref).convert("RGB")
         ref_array = np.array(ref_img).astype(np.float32) / 255.0
+        ref_array = np.transpose(ref_array, (2, 0, 1))
         ref_tensor = torch.from_numpy(ref_array)
         ref_amp, _ = amplitude_phase_split(ref_tensor)
         zfc_target_tensor = zero_frequency_component(ref_amp)
         zfc_target = zfc_target_tensor.item() if isinstance(zfc_target_tensor, torch.Tensor) else zfc_target_tensor
 
-    model = RefLLENet(input_channels=1, hidden_dim=32, num_actions=31).to(device)
+    model = RefLLENet(input_channels=3, hidden_dim=32, num_actions=31).to(device)
     if args.model:
         model.load_state_dict(torch.load(args.model, map_location=device))
     model.eval()
@@ -50,10 +52,7 @@ def main():
             action_dist = torch.distributions.Categorical(policy)
             action = action_dist.sample()
 
-        if state.ndim == 2:
-            action_map = action.reshape(state.shape)
-        else:
-            action_map = action.reshape(state.shape[1:])
+        action_map = action.reshape(state.shape[-2:])
 
         next_state, reward, done = env.step(action_map)
 
@@ -66,9 +65,9 @@ def main():
 
         state = next_state.to(device)
 
-    enhanced = state.cpu().numpy()
+    enhanced = env.image_current.cpu().numpy()
     if enhanced.ndim == 3:
-        enhanced = np.mean(enhanced, axis=0)
+        enhanced = np.transpose(enhanced, (1, 2, 0))
 
     enhanced = np.clip(enhanced * 255, 0, 255).astype(np.uint8)
     Image.fromarray(enhanced).save(args.output)

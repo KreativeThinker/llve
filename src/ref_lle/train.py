@@ -15,15 +15,19 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--preset", default="tiny", choices=["tiny", "paper"])
     parser.add_argument("--device", default="cpu")
+    parser.add_argument("--low-light-path", default="data/lolv2-real/Train/Input", type=str)
+    parser.add_argument("--normal-light-path", default="data/lolv2-real/Train/GT", type=str)
     args = parser.parse_args()
 
     config = TINY_CONFIG if args.preset == "tiny" else PAPER_CONFIG
+    config.lol_train_path = args.low_light_path
+    config.lol_test_path = args.normal_light_path
     device = torch.device(args.device)
 
-    model = RefLLENet(input_channels=1, hidden_dim=config.hidden_dim, num_actions=31).to(device)
+    model = RefLLENet(input_channels=3, hidden_dim=config.hidden_dim, num_actions=31).to(device)
     optimizer = optim.Adam(model.parameters(), lr=config.learning_rate)
 
-    dataset = LOLDataset()
+    dataset = LOLDataset(low_light_path=config.lol_train_path, normal_light_path=config.lol_test_path)
     scorer = ProxyQualityScorer()
 
     print(f"Training with {config.name} config, {config.num_rounds} rounds")
@@ -45,10 +49,7 @@ def main():
                 action_dist = torch.distributions.Categorical(policy)
                 action = action_dist.sample()
 
-            if state.ndim == 2:
-                action_map = action.reshape(state.shape)
-            else:
-                action_map = action.reshape(state.shape[1:])
+            action_map = action.reshape(state.shape[-2:])
 
             next_state, reward, done = env.step(action_map)
 
@@ -70,6 +71,9 @@ def main():
             avg_reward = total_reward / 100
             print(f"Round {round_idx + 1}: avg reward = {avg_reward:.4f}")
             total_reward = 0
+
+    torch.save(model.state_dict(), "model.pt")
+    print("Saved trained model to model.pt")
 
 
 if __name__ == "__main__":

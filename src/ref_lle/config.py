@@ -21,7 +21,7 @@ class TrainConfig:
 
 PAPER_CONFIG = TrainConfig(
     name="paper",
-    num_rounds=10000,
+    num_rounds=1500,
     steps_per_episode=10,
     batch_size=2,
     learning_rate=0.002,

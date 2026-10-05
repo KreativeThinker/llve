@@ -46,9 +46,9 @@ class LOLDataset:
                 normal = np.array(Image.open(normal_file)).astype(np.float32) / 255.0
 
                 if low.ndim == 3:
-                    low = np.mean(low, axis=2)
+                    low = np.transpose(low, (2, 0, 1))
                 if normal.ndim == 3:
-                    normal = np.mean(normal, axis=2)
+                    normal = np.transpose(normal, (2, 0, 1))
 
                 self.pairs.append((low, normal))
 

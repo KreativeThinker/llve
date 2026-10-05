@@ -6,8 +6,8 @@ class Encoder(nn.Module):
     def __init__(self, input_channels=1, hidden_dim=32):
         super().__init__()
         self.conv1 = nn.Conv2d(input_channels, hidden_dim, kernel_size=3, padding=1)
-        self.conv2 = nn.Conv2d(hidden_dim, hidden_dim, kernel_size=3, stride=2, padding=1)
-        self.conv3 = nn.Conv2d(hidden_dim, hidden_dim, kernel_size=3, stride=2, padding=1)
+        self.conv2 = nn.Conv2d(hidden_dim, hidden_dim, kernel_size=3, padding=1)
+        self.conv3 = nn.Conv2d(hidden_dim, hidden_dim, kernel_size=3, padding=1)
         self.relu = nn.ReLU()
 
     def forward(self, x):
@@ -36,10 +36,11 @@ class RefLLENet(nn.Module):
         )
 
     def forward(self, x):
+        x = torch.log1p(x)
         if x.ndim == 2:
             x = x.unsqueeze(0).unsqueeze(0)
         elif x.ndim == 3:
-            x = x.unsqueeze(1)
+            x = x.unsqueeze(0)
 
         enc = self.encoder(x)
 

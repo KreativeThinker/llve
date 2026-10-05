@@ -27,11 +27,11 @@ class LowLightEnv:
         self.amp_current = self.amp_0.clone().to(self.device)
         self.zfc_current = zero_frequency_component(self.amp_current)
         self.step_count = 0
-        return self.image_current.clone()
+        return self.amp_current.clone()
 
     def step(self, action_map):
         action_map = action_map.to(self.device).float()
-        assert action_map.shape == self.amp_current.shape, f"action_map shape {action_map.shape} != amp shape {self.amp_current.shape}"
+        assert action_map.shape == self.amp_current.shape[-2:], f"action_map shape {action_map.shape} != amp spatial shape {self.amp_current.shape[-2:]}"
 
         alpha_min, alpha_max, alpha_step = -0.1, 0.2, 0.01
         num_actions = int((alpha_max - alpha_min) / alpha_step) + 1
@@ -40,7 +40,7 @@ class LowLightEnv:
         alphas = alpha_min + action_map * alpha_step
         gain = torch.exp(alphas)
 
-        self.amp_current = (self.amp_0 * gain).to(self.device)
+        self.amp_current = (self.amp_current * gain).to(self.device)
         self.image_current = recombine(self.amp_current, self.pha_0)
         self.image_current = torch.clamp(self.image_current, 0, 1)
 
@@ -56,7 +56,7 @@ class LowLightEnv:
         self.step_count += 1
         done = self.step_count >= self.max_steps
 
-        return self.image_current.clone(), reward, done
+        return self.amp_current.clone(), reward, done
 
     def get_zfc(self):
         return self.zfc_current

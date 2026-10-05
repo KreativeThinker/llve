@@ -8,16 +8,17 @@ authors = [
 ]
 requires-python = ">=3.13"
 dependencies = [
-    "matplotlib>=3.11.2",
-    "notebook>=7.6.3",
-    "numpy>=2.5.3",
-    "pandas>=3.0.6",
-    "pillow>=12.3.0",
-    "pytest>=9.1.1",
-    "scikit-image>=0.26.0",
-    "torch>=2.14.1",
-    "torchvision>=0.29.1",
-    "tqdm>=4.70.1",
+    "matplotlib",
+    "notebook",
+    "numpy",
+    "pandas",
+    "pillow",
+    "pyiqa>=0.1.16",
+    "pytest",
+    "scikit-image",
+    "torch",
+    "torchvision",
+    "tqdm",
 ]
 
 [project.scripts]
@@ -27,3 +28,12 @@ ref-lle-infer = "ref_lle.infer:main"
 [build-system]
 requires = ["uv_build>=0.12.17,<0.13.0"]
 build-backend = "uv_build"
+
+[[tool.uv.index]]
+name = "pytorch-cu124"
+url = "https://download.pytorch.org/whl/cu124"
+explicit = true
+
+[tool.uv.sources]
+torch = { index = "pytorch-cu124" }
+torchvision = { index = "pytorch-cu124" }
