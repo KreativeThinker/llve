@@ -57,6 +57,12 @@ def train_step(model, optimizer, state, action_map, reward, gamma=0.95, entropy_
     log_probs = log_softmax.gather(1, action_flat.unsqueeze(-1)).squeeze(-1)
 
     value_flat = value.squeeze(-1)
+    
+    if reward.ndim == 1:
+        b = reward.shape[0]
+        hw = value_flat.shape[0] // b
+        reward = reward.unsqueeze(1).expand(b, hw).reshape(-1)
+        
     advantage = reward - value_flat.detach()
 
     policy_loss = -(log_probs * advantage).mean()

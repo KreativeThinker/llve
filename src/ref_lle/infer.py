@@ -5,7 +5,7 @@ import numpy as np
 
 from .model import RefLLENet
 from .env import LowLightEnv
-from .rewards import ProxyQualityScorer
+from .rewards import UniqueScorer
 from .fourier import zero_frequency_component, amplitude_phase_split
 
 
@@ -32,9 +32,9 @@ def main():
         ref_array = np.array(ref_img).astype(np.float32) / 255.0
         ref_array = np.transpose(ref_array, (2, 0, 1))
         ref_tensor = torch.from_numpy(ref_array)
-        ref_amp, _ = amplitude_phase_split(ref_tensor)
-        zfc_target_tensor = zero_frequency_component(ref_amp)
-        zfc_target = zfc_target_tensor.item() if isinstance(zfc_target_tensor, torch.Tensor) else zfc_target_tensor
+        ref_amp, _ = amplitude_phase_split(ref_tensor.unsqueeze(0))
+        zfc_target_tensor = zero_frequency_component(ref_amp).mean(dim=1)
+        zfc_target = zfc_target_tensor.item()
 
     model = RefLLENet(input_channels=3, hidden_dim=32, num_actions=31).to(device)
     if args.model:
@@ -42,7 +42,7 @@ def main():
     model.eval()
 
     input_tensor = torch.from_numpy(input_array)
-    env = LowLightEnv(input_tensor, scorer=ProxyQualityScorer(), max_steps=args.max_iterations, zfc_target=zfc_target, device=device)
+    env = LowLightEnv(input_tensor, scorer=UniqueScorer(device=args.device), max_steps=args.max_iterations, zfc_target=zfc_target, device=device)
     state = env.reset().to(device)
 
     for step in range(args.max_iterations):
@@ -52,20 +52,21 @@ def main():
             action_dist = torch.distributions.Categorical(policy)
             action = action_dist.sample()
 
-        action_map = action.reshape(state.shape[-2:])
+        b, c, h, w = state.shape
+        action_map = action.reshape(b, h, w)
 
         next_state, reward, done = env.step(action_map)
 
-        zfc = env.get_zfc()
+        zfc = env.get_zfc().mean(dim=1)
 
-        print(f"Step {step + 1}: ZFC = {zfc[0].item():.2e}, reward = {reward:.4f}")
+        print(f"Step {step + 1}: ZFC = {zfc[0].item():.2e}, reward = {reward[0].item():.4f}")
 
         if done or torch.abs(zfc[0] - zfc_target) / zfc_target < 0.1:
             break
 
         state = next_state.to(device)
 
-    enhanced = env.image_current.cpu().numpy()
+    enhanced = env.image_current.squeeze(0).cpu().numpy()
     if enhanced.ndim == 3:
         enhanced = np.transpose(enhanced, (1, 2, 0))
 

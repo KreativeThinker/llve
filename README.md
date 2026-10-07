@@ -72,7 +72,7 @@ r_amp = |zfc_target / zfc_current - 1|
 ```
 r_iq = S(s_t) - S(s_0)
 ```
-where S(·) = UNIQUE quality score. Currently uses a proxy scorer (contrast + brightness).
+where S(·) = UNIQUE quality score (implemented via `pyiqa`).
 
 **Amplitude Exposure Reward:**
 ```
@@ -150,24 +150,22 @@ Checks:
 
 1. **Architecture**: Paper supplementary missing. We use small CNN (32 channels, 3 conv layers).
 2. **Action space**: Discrete 31 actions (alpha step 0.01) instead of continuous.
-3. **Reward scorer**: Proxy scorer (contrast + brightness) until UNIQUE weights available.
+3. **Reward scorer**: Uses actual UNIQUE metric via `pyiqa`.
 4. **Per-pixel actions**: Each pixel chooses an action independently (no spatial consistency).
 5. **Inference**: ZFC guidance at each step; paper may use final ZFC check.
 
 ## Assumptions Documented
 
-- Compute: CPU only. Full training requires GPU.
+- Compute: GPU fully supported via PyTorch native FFTs and batched data loading.
 - Data: Synthetic pairs if LOL unavailable.
-- Scorer: Pluggable interface; swap real UNIQUE when weights available.
+- Scorer: Fully integrated UNIQUE scorer.
 - Network: Reasonable defaults from similar RL papers.
 
 ## Next Steps
 
-1. Swap proxy scorer → real UNIQUE (`pyiqa` or author weights)
-2. Add LOL dataset support + full training on GPU
-3. Spatial consistency (action smoothing, guided by phase)
-4. User study for personalization preferences
-5. Comparison with state-of-art baselines
+1. Add spatial consistency (action smoothing, guided by phase)
+2. User study for personalization preferences
+3. Comparison with state-of-art baselines
 
 ## References
 
