@@ -15,4 +15,7 @@ def zero_frequency_component(amp):
     fft_shifted = torch.fft.fftshift(amp, dim=(-2, -1))
     h, w = amp.shape[-2:]
     center_h, center_w = h // 2, w // 2
-    return fft_shifted[..., center_h, center_w]
+    zfc = fft_shifted[..., center_h, center_w]
+    if zfc.ndim == 0:
+        zfc = zfc.unsqueeze(0)
+    return zfc

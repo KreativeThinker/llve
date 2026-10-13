@@ -17,8 +17,13 @@ def ensure_3d(x):
 
 def to_grayscale(img):
     img = to_numpy(img)
-    if img.ndim == 3:
-        return np.mean(img, axis=0)
+    if img.ndim == 4:
+        return np.mean(img, axis=(0, 1))
+    elif img.ndim == 3:
+        if img.shape[0] in [1, 3]:
+            return np.mean(img, axis=0)
+        else:
+            return np.mean(img, axis=-1)
     return img
 
 

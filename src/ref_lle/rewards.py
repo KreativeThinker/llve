@@ -59,18 +59,22 @@ class UniqueScorer(QualityScorer):
 
 
 def amplitude_exposure_reward(zfc_current, zfc_target=2.5e5):
+    """Paper Eq. (4): r^{amp}_t = | \bar{zfc} / zfc_t - 1 |"""
     diff = torch.abs(zfc_target / (zfc_current + 1e-8) - 1.0)
-    return -diff
+    return diff
 
 
-def image_quality_reward(scorer, image_current, image_initial):
+def image_quality_reward(scorer, image_current, image_initial=None, score_initial=None):
+    """Paper Eq. (3): r^{iq}_t = S(s_t) - S(s_0)"""
     score_current = scorer.score(image_current)
-    score_initial = scorer.score(image_initial)
+    if score_initial is None:
+        score_initial = scorer.score(image_initial)
     return score_current - score_initial
 
 
-def combined_reward(scorer, image_current, image_initial, zfc_current, zfc_target=2.5e5, w_iq=1000, w_amp=60):
-    r_iq = image_quality_reward(scorer, image_current, image_initial)
+def combined_reward(scorer, image_current, image_initial=None, zfc_current=None, zfc_target=2.5e5, w_iq=1000, w_amp=60, score_initial=None):
+    """Paper Eq. (5): r_t = w_{iq} * r^{iq}_t - w_{amp} * r^{amp}_t"""
+    r_iq = image_quality_reward(scorer, image_current, image_initial=image_initial, score_initial=score_initial)
     r_amp = amplitude_exposure_reward(zfc_current, zfc_target)
 
     r_total = w_iq * r_iq - w_amp * r_amp
