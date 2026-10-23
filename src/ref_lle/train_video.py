@@ -2,87 +2,74 @@ import argparse
 from pathlib import Path
 import torch
 import torch.optim as optim
+from torch.utils.data import DataLoader
 from tqdm import tqdm
 
 from .model import TemporalDiffRefLLENet
 from .video_env import TemporalVideoLowLightEnv
-from .video_data import SDSDVideoDataset
 from .rewards import ProxyQualityScorer
-from .utils import compute_entropy
+from .video_data import SDSDVideoDataset
 
 
 def train_step_temporal(model, optimizer, composite_state, action_map, reward, entropy_coef=0.01):
-    optimizer.zero_grad()
+    b, h, w = action_map.shape
     policy_logits, value = model(composite_state)
 
-    action_flat = action_map.reshape(-1)
-    log_softmax = torch.log_softmax(policy_logits, dim=-1)
-    log_probs = log_softmax.gather(1, action_flat.unsqueeze(-1)).squeeze(-1)
+    policy = torch.softmax(policy_logits, dim=-1)
+    log_policy = torch.log_softmax(policy_logits, dim=-1)
 
-    value_flat = value.squeeze(-1)
-    if reward.ndim == 1 or reward.numel() == 1:
-        advantage = reward.item() - value_flat.detach()
-    else:
-        advantage = reward.reshape(-1) - value_flat.detach()
+    action_flat = action_map.reshape(-1, 1)
+    log_prob = log_policy.gather(1, action_flat).squeeze(1)
 
-    policy_loss = -(log_probs * advantage).mean()
-    value_loss = 0.5 * advantage.pow(2).mean()
-    entropy = compute_entropy(policy_logits)
-    loss = policy_loss + value_loss - entropy_coef * entropy
+    advantage = reward.reshape(-1) - value.squeeze(1).detach()
+    policy_loss = -(log_prob * advantage).mean()
+    value_loss = 0.5 * (reward.reshape(-1) - value.squeeze(1)).pow(2).mean()
 
-    loss.backward()
-    torch.nn.utils.clip_grad_norm_(model.parameters(), 40.0)
+    entropy = -(policy * log_policy).sum(dim=-1).mean()
+    total_loss = policy_loss + value_loss - entropy_coef * entropy
+
+    optimizer.zero_grad()
+    total_loss.backward()
+    torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=40.0)
     optimizer.step()
 
-    return loss.item(), policy_loss.item(), value_loss.item(), entropy.item()
+    return total_loss.item(), policy_loss.item(), value_loss.item(), entropy.item()
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Train Causal Temporal Difference ReF-LLE on SDSD Video Clips")
-    parser.add_argument("--sdsd-input", default="data/sdsd/indoor_np/indoor_np/input", help="SDSD low-light input directory")
-    parser.add_argument("--sdsd-gt", default="data/sdsd/indoor_np/indoor_np/GT", help="SDSD ground-truth directory")
-    parser.add_argument("--init-ckpt", default="model_paper_10k.pt", help="Pretrained 10k checkpoint to initialize from")
-    parser.add_argument("--save-path", default="model_temporal_sdsd.pt", help="Path to save trained video model")
-    parser.add_argument("--num-rounds", type=int, default=10000, help="Number of training rounds")
-    parser.add_argument("--clip-len", type=int, default=4, help="Frames per video clip")
-    parser.add_argument("--downsample", type=int, default=4, help="Spatial downsample factor for fast training")
-    parser.add_argument("--steps-per-frame", type=int, default=2, help="Refinement steps per frame")
-    parser.add_argument("--lr", type=float, default=0.001, help="Learning rate")
-    parser.add_argument("--zfc-target", type=float, default=5.8e4, help="Target ZFC for SDSD indoor")
-    parser.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu")
+    parser = argparse.ArgumentParser(description="Train Motion-Consistent Temporal ReF-LLE on SDSD Video")
+    parser.add_argument("--data-root", default="data/sdsd/indoor_np/indoor_np", type=str)
+    parser.add_argument("--pretrained-10k", default="model_paper_10k.pt", type=str)
+    parser.add_argument("--save-path", default="model_temporal_sdsd.pt", type=str)
+    parser.add_argument("--num-rounds", default=1000, type=int)
+    parser.add_argument("--steps-per-frame", default=8, type=int)
+    parser.add_argument("--warmup-steps", default=12, type=int)
+    parser.add_argument("--zfc-target", default=5.8e4, type=float)
+    parser.add_argument("--lr", default=0.0005, type=float)
+    parser.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu", type=str)
     args = parser.parse_args()
 
     device = torch.device(args.device)
-
-    print("==================================================================")
-    print(" Training Causal Temporal ReF-LLE (10k Rounds) on SDSD Dataset")
-    print("==================================================================")
-    print(f"Device: {device}")
-    print(f"Initializing from: {args.init_ckpt}")
-    print(f"Output weights:    {args.save_path}")
+    print(f"=== Starting Motion-Consistent Temporal ReF-LLE Training on {device} ===")
 
     model = TemporalDiffRefLLENet(hidden_dim=32, num_actions=31).to(device)
-    if Path(args.init_ckpt).exists():
-        model.load_from_10k(args.init_ckpt, device=device)
+
+    # Warm-start from 10k single-image base model
+    if Path(args.pretrained_10k).exists():
+        print(f"Initializing temporal network from: {args.pretrained_10k}")
+        model.load_from_10k(args.pretrained_10k, device=device)
     else:
-        print(f"Warning: {args.init_ckpt} not found. Starting from scratch.")
+        print("Pretrained 10k model not found. Training from scratch.")
 
     optimizer = optim.Adam(model.parameters(), lr=args.lr)
 
-    print("Loading and caching SDSD video clips in memory...")
-    dataset = SDSDVideoDataset(
-        input_dir=args.sdsd_input,
-        gt_dir=args.sdsd_gt,
-        clip_len=args.clip_len,
-        downsample=args.downsample,
-        preload_to_ram=True,
-    )
+    dataset = SDSDVideoDataset(root_dir=args.data_root, clip_len=8, downsample=2)
     print(f"Cached {len(dataset)} video clips in RAM.")
 
     scorer = ProxyQualityScorer()
 
     total_reward = 0.0
-    progress_bar = tqdm(range(args.num_rounds), desc="10k Training")
+    progress_bar = tqdm(range(args.num_rounds), desc="Temporal Training")
 
     for round_idx in progress_bar:
         in_clip, gt_clip = dataset[round_idx % len(dataset)]
@@ -92,6 +79,7 @@ def main():
             gt_clip=gt_clip,
             scorer=scorer,
             steps_per_frame=args.steps_per_frame,
+            warmup_steps=args.warmup_steps,
             zfc_target=args.zfc_target,
             device=device,
         )
@@ -124,15 +112,15 @@ def main():
 
         total_reward += episode_reward
 
-        if (round_idx + 1) % 500 == 0:
-            avg_rew = total_reward / 500.0
+        if (round_idx + 1) % 100 == 0:
+            avg_rew = total_reward / 100.0
             total_reward = 0.0
             progress_bar.set_postfix({"AvgRew": f"{avg_rew:.2f}", "Loss": f"{loss:.4f}"})
             # Save periodic checkpoint
             torch.save(model.state_dict(), args.save_path)
 
     torch.save(model.state_dict(), args.save_path)
-    print(f"\n10,000-Round Training Complete. Saved model to: {args.save_path}")
+    print(f"\nTraining Complete. Saved model to: {args.save_path}")
 
 
 if __name__ == "__main__":

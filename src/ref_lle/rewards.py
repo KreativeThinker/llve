@@ -112,32 +112,36 @@ def temporal_video_reward(
     w_align=50.0,
 ):
     """
-    Temporal video reward incorporating:
+    Physical Motion-Consistent Video Reward:
       - Perceptual quality improvement (r_iq)
       - Exposure alignment with ZFC target (r_amp)
       - Gain smoothness penalty (||G_t - G_{t-1}^*||^2)
-      - Motion-aware photometric temporal difference penalty (||(I_t - I_{t-1}^*) - (I_t^raw - I_{t-1}^raw)||_1)
+      - Motion difference matching: compares raw inter-frame motion (I_t^raw - I_{t-1}^raw)
+        against enhanced inter-frame motion (\\hat{I}_t - \\hat{I}_{t-1}^*)
       - Supervised ground-truth alignment (if available)
     """
     device = image_current.device
     r_iq = image_quality_reward(scorer, image_current, image_initial=image_initial)
     r_amp = -amplitude_exposure_reward(zfc_current, zfc_target) if zfc_current is not None else torch.tensor(0.0, device=device)
 
-    # Gain smoothness penalty
+    # Gain smoothness penalty across frames
     if gain_current is not None and gain_prev is not None:
         gain_penalty = torch.mean((gain_current - gain_prev) ** 2)
     else:
         gain_penalty = torch.tensor(0.0, device=device)
 
-    # Motion-aware photometric temporal difference penalty
+    # Motion difference matching:
+    # Delta_raw  = I_t^raw - I_{t-1}^raw
+    # Delta_enh  = \\hat{I}_t - \\hat{I}_{t-1}^*
+    # Minimizing ||Delta_enh - Delta_raw||_1 guarantees enhanced video moves exactly as the raw camera frames
     if prev_enhanced_img is not None and prev_input_img is not None:
-        enh_diff = image_current - prev_enhanced_img
-        raw_diff = image_initial - prev_input_img
-        temp_diff_penalty = torch.mean(torch.abs(enh_diff - raw_diff))
+        delta_raw = image_initial - prev_input_img
+        delta_enh = image_current - prev_enhanced_img
+        motion_diff_penalty = torch.mean(torch.abs(delta_enh - delta_raw))
     else:
-        temp_diff_penalty = torch.tensor(0.0, device=device)
+        motion_diff_penalty = torch.tensor(0.0, device=device)
 
-    # Ground-truth alignment reward
+    # Ground-truth alignment reward (if training with paired GT)
     if gt_image is not None:
         align_rew = -torch.mean(torch.abs(image_current - gt_image))
     else:
@@ -147,7 +151,7 @@ def temporal_video_reward(
         w_iq * r_iq
         + w_amp * r_amp
         - w_gain * gain_penalty
-        - w_diff * temp_diff_penalty
+        - w_diff * motion_diff_penalty
         + w_align * align_rew
     )
     return total_reward

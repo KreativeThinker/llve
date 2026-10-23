@@ -39,7 +39,8 @@ def enhance_sdsd_video(
     downsample=2,
     model_path="model_temporal_sdsd.pt",
     output_dir="data/sdsd",
-    steps_per_frame=4,
+    steps_per_frame=10,
+    warmup_steps=14,
     device="cpu",
 ):
     output_dir = Path(output_dir)
@@ -94,11 +95,11 @@ def enhance_sdsd_video(
     enhanced_frames = []
     prev_enhanced_img = None
     prev_enhanced_amp = None
-    prev_gain = None
+    prev_raw_img = None
 
     alpha_min, alpha_max, alpha_step = -0.1, 0.35, 0.015
 
-    print("\n--- Enhancing Video Frames with Causal Temporal Consistency ---")
+    print("\n--- Enhancing Video Frames with Motion-Consistent Causal Pipeline ---")
     for t in range(T):
         cur_img = raw_in[t]
         t_cur = torch.from_numpy(np.transpose(cur_img, (2, 0, 1))).unsqueeze(0).float().to(device)
@@ -106,20 +107,22 @@ def enhance_sdsd_video(
         amp_cur = amp_0.clone()
 
         if prev_enhanced_img is None:
-            # First frame: no previous updated frame
-            prev_enhanced_img = t_cur.clone()
+            # First frame: no previous frame exists
             prev_enhanced_amp = amp_0.clone()
-            delta_prev_updated = torch.zeros_like(t_cur)
+            delta_raw_motion = torch.zeros_like(t_cur)
         else:
-            # Causal frame differencing: raw current frame minus previous updated frame
-            delta_prev_updated = t_cur - prev_enhanced_img
+            # Physical camera motion between raw frames (I_t^raw - I_{t-1}^raw)
+            delta_raw_motion = t_cur - prev_raw_img
+
+        # Frames 0 and 1 receive full warmup_steps, subsequent frames receive steps_per_frame
+        is_warmup = t < 2
+        steps = warmup_steps if is_warmup else steps_per_frame
 
         cum_gain = torch.ones_like(amp_cur)
-        steps = steps_per_frame if t == 0 else max(2, steps_per_frame - 1)
 
         for step in range(steps):
-            # 9-channel causal composite input: [A_t, A^*_{t-1}, I_t - \\hat{I}^*_{t-1}]
-            comp_state = torch.cat([torch.log1p(amp_cur), torch.log1p(prev_enhanced_amp), delta_prev_updated], dim=1)
+            # 9-channel motion-consistent composite input: [A_t, A^*_{t-1}, Delta_raw]
+            comp_state = torch.cat([torch.log1p(amp_cur), torch.log1p(prev_enhanced_amp), delta_raw_motion], dim=1)
 
             with torch.no_grad():
                 logits, _ = model(comp_state)
@@ -127,10 +130,12 @@ def enhance_sdsd_video(
 
             zfc_cur = zero_frequency_component(amp_cur).mean().item()
             ratio = zfc_target / (zfc_cur + 1e-8)
-            target_alpha = np.clip(np.log(ratio) / (steps - step), alpha_min, alpha_max)
+            remaining_steps = max(1, steps - step)
+            target_alpha = np.clip(np.log(ratio) / remaining_steps, alpha_min, alpha_max)
             act_idx_target = int(round((target_alpha - alpha_min) / alpha_step))
             act_idx_target = min(max(act_idx_target, 0), 30)
 
+            # Smoothly guide policy towards target ZFC
             action_map = (0.6 * action.float() + 0.4 * act_idx_target).round().clamp(0, 30)
 
             alphas = alpha_min + action_map * alpha_step
@@ -149,10 +154,10 @@ def enhance_sdsd_video(
         final_frame = np.transpose(img_step.squeeze(0).cpu().numpy(), (1, 2, 0))
         enhanced_frames.append(final_frame)
 
-        # Update previous updated references for t+1
+        # Update previous frame history for t + 1
         prev_enhanced_img = img_step.detach().clone()
         prev_enhanced_amp = amp_cur.detach().clone()
-        prev_gain = cum_gain.detach().clone()
+        prev_raw_img = t_cur.detach().clone()
 
         if raw_gt:
             psnr_val = compute_psnr(raw_gt[t], final_frame, data_range=1.0)
@@ -167,7 +172,7 @@ def enhance_sdsd_video(
     tce_in = compute_temporal_consistency_error(raw_in)
     tce_enh = compute_temporal_consistency_error(enhanced_frames)
 
-    print("\n================ Causal Video Metrics Summary ================")
+    print("\n================ Motion-Consistent Video Metrics Summary ================")
     print(f"Input Low-Light:     Brightness = {np.mean(raw_in):.4f}, Contrast = {np.std(raw_in):.4f}")
     print(f"Enhanced Video:      Brightness = {np.mean(enhanced_frames):.4f}, Contrast = {np.std(enhanced_frames):.4f}")
     if raw_gt:
@@ -178,46 +183,46 @@ def enhance_sdsd_video(
         print(f"Average PSNR:        {psnr_in:.2f} dB ==> {psnr_enh:.2f} dB (+{psnr_enh - psnr_in:.2f} dB)")
         print(f"Average SSIM:        {ssim_in:.4f}   ==> {ssim_enh:.4f}   (+{ssim_enh - ssim_in:.4f})")
     print(f"Flicker Index:       {flicker_in:.5f} ==> {flicker_enh:.5f}")
-    print(f"Temporal Error (TCE):{tce_in:.5f} ==> {tce_enh:.5f}")
-    print("=============================================================")
+    print(f"Temporal Accel Err:  {tce_in:.5f} ==> {tce_enh:.5f}")
 
-    # Save output GIFs
-    out_gif = output_dir / f"{scene}_enhanced.gif"
-    enh_uint8 = [np.clip(f * 255.0, 0, 255).astype(np.uint8) for f in enhanced_frames]
-    imageio.mimsave(str(out_gif), enh_uint8, fps=6)
-    print(f"Saved enhanced video to {out_gif}")
+    # Export side-by-side video preview
+    preview_frames = []
+    for t in range(T):
+        in_u8 = (np.clip(raw_in[t], 0, 1) * 255).astype(np.uint8)
+        enh_u8 = (np.clip(enhanced_frames[t], 0, 1) * 255).astype(np.uint8)
+        if raw_gt:
+            gt_u8 = (np.clip(raw_gt[t], 0, 1) * 255).astype(np.uint8)
+            row = np.concatenate([in_u8, enh_u8, gt_u8], axis=1)
+        else:
+            row = np.concatenate([in_u8, enh_u8], axis=1)
+        preview_frames.append(row)
 
-    if raw_gt:
-        cmp_gif = output_dir / f"{scene}_comparison.gif"
-        cmp_frames = [
-            np.hstack([
-                np.clip(i * 255.0, 0, 255).astype(np.uint8),
-                np.clip(e * 255.0, 0, 255).astype(np.uint8),
-                np.clip(g * 255.0, 0, 255).astype(np.uint8),
-            ])
-            for i, e, g in zip(raw_in, enhanced_frames, raw_gt)
-        ]
-        imageio.mimsave(str(cmp_gif), cmp_frames, fps=6)
-        print(f"Saved comparison to {cmp_gif}")
+    gif_path = output_dir / f"enhanced_{scene}_preview.gif"
+    imageio.mimsave(gif_path, preview_frames, fps=4, loop=0)
+    print(f"\nSaved side-by-side enhanced GIF to: {gif_path}")
 
 
 def main():
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--scene", default="pair1")
-    parser.add_argument("--num-frames", type=int, default=12)
-    parser.add_argument("--downsample", type=int, default=2)
-    parser.add_argument("--steps", type=int, default=4)
-    parser.add_argument("--model", default="model_temporal_sdsd.pt")
-    parser.add_argument("--output-dir", default="data/sdsd")
+    parser = argparse.ArgumentParser(description="Enhance low-light video with motion-consistent temporal consistency.")
+    parser.add_argument("--scene", default="pair1", type=str)
+    parser.add_argument("--num-frames", default=12, type=int)
+    parser.add_argument("--downsample", default=2, type=int)
+    parser.add_argument("--model-path", default="model_temporal_sdsd.pt", type=str)
+    parser.add_argument("--output-dir", default="data/sdsd", type=str)
+    parser.add_argument("--steps-per-frame", default=10, type=int)
+    parser.add_argument("--warmup-steps", default=14, type=int)
+    parser.add_argument("--device", default="cpu", type=str)
     args = parser.parse_args()
 
     enhance_sdsd_video(
         scene=args.scene,
         num_frames=args.num_frames,
         downsample=args.downsample,
-        model_path=args.model,
+        model_path=args.model_path,
         output_dir=args.output_dir,
-        steps_per_frame=args.steps,
+        steps_per_frame=args.steps_per_frame,
+        warmup_steps=args.warmup_steps,
+        device=args.device,
     )
 
 

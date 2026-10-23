@@ -7,20 +7,26 @@ from .rewards import ProxyQualityScorer, temporal_video_reward
 
 class TemporalVideoLowLightEnv:
     """
-    Causal Video Environment for Temporal Difference ReF-LLE.
-    Iterates over a sequence of video frames, maintaining:
-      - Previous updated frame (\\hat{I}^*_{t-1})
-      - Previous updated Fourier amplitude (A^*_{t-1})
-      - Previous cumulative gain map (G^*_{t-1})
-      - Causal difference with previous updated frame: Delta I_{t, prev_updated} = I_t - \\hat{I}^*_{t-1}
-    No future/upcoming frames are used.
+    Physical Motion-Consistent Video Environment for ReF-LLE.
+    Pipeline:
+      1. Frames 0 and 1 act as the initial warm-up anchor: enhanced with full steps
+         to reach proper exposure without premature suppression.
+      2. Consecutive frames compare:
+           Delta_raw = I_t^raw - I_{t-1}^raw
+           Delta_enh = \\hat{I}_t - \\hat{I}_{t-1}^*
+         and align Delta_enh to Delta_raw.
+      3. Network input receives:
+           - Current frame Fourier amplitude: A_t (3 channels)
+           - Previous frame updated Fourier amplitude: A^*_{t-1} (3 channels)
+           - Raw camera inter-frame motion: Delta_raw = I_t^raw - I_{t-1}^raw (3 channels)
     """
     def __init__(
         self,
         video_clip,
         gt_clip=None,
         scorer=None,
-        steps_per_frame=3,
+        steps_per_frame=10,
+        warmup_steps=12,
         zfc_target=5.8e4,
         alpha_min=-0.1,
         alpha_max=0.35,
@@ -32,6 +38,7 @@ class TemporalVideoLowLightEnv:
         self.gt_clip = gt_clip.to(self.device).float() if gt_clip is not None else None
         self.scorer = scorer or ProxyQualityScorer()
         self.steps_per_frame = steps_per_frame
+        self.warmup_steps = warmup_steps
         self.zfc_target = zfc_target
 
         self.num_frames, self.channels, self.h, self.w = self.video_clip.shape
@@ -65,23 +72,25 @@ class TemporalVideoLowLightEnv:
         self.cum_gain = torch.ones_like(self.amp_current)
 
         if self.prev_enhanced_img is None:
-            # First frame: reference is the frame itself
+            # First frame: no previous frame exists
             self.prev_enhanced_img = self.image_initial.clone()
             self.prev_enhanced_amp = self.amp_0.clone()
             self.prev_gain = torch.ones_like(self.amp_current)
-            self.delta_prev_updated = torch.zeros_like(self.image_initial)
+            self.delta_raw_motion = torch.zeros_like(self.image_initial)
         else:
-            # Causal frame differencing: current raw frame minus previous updated frame
-            self.delta_prev_updated = self.image_initial - self.prev_enhanced_img
+            # Physical camera motion: difference between consecutive raw input frames
+            prev_raw_img = self.video_clip[frame_idx - 1 : frame_idx]
+            self.delta_raw_motion = self.image_initial - prev_raw_img
 
         return self._get_composite_state()
 
     def _get_composite_state(self):
-        # 9-channel causal composite state: [amp_cur, prev_enhanced_amp, delta_prev_updated]
+        # 9-channel motion-consistent composite state:
+        # [log1p(A_t), log1p(A^*_{t-1}), Delta_raw = (I_t^raw - I_{t-1}^raw)]
         return torch.cat([
             torch.log1p(self.amp_current),
             torch.log1p(self.prev_enhanced_amp),
-            self.delta_prev_updated,
+            self.delta_raw_motion,
         ], dim=1)
 
     def step(self, action_map):
@@ -99,22 +108,33 @@ class TemporalVideoLowLightEnv:
 
         gt_frame = self.gt_clip[self.current_frame_idx : self.current_frame_idx + 1] if self.gt_clip is not None else None
 
+        prev_raw_frame = self.video_clip[max(0, self.current_frame_idx - 1) : max(0, self.current_frame_idx - 1) + 1]
+
+        # For initial warm-up frames (frames 0 and 1), emphasize individual exposure & quality convergence
+        is_warmup = self.current_frame_idx < 2
+        w_diff_eff = 5.0 if is_warmup else 25.0
+        w_gain_eff = 2.0 if is_warmup else 15.0
+
         reward = temporal_video_reward(
             scorer=self.scorer,
             image_current=self.image_current,
             image_initial=self.image_initial,
             prev_enhanced_img=self.prev_enhanced_img,
-            prev_input_img=self.video_clip[max(0, self.current_frame_idx - 1) : max(0, self.current_frame_idx - 1) + 1],
+            prev_input_img=prev_raw_frame,
             gain_current=self.cum_gain,
             gain_prev=self.prev_gain,
             zfc_current=zfc_cur,
             zfc_target=self.zfc_target,
+            w_gain=w_gain_eff,
+            w_diff=w_diff_eff,
             gt_image=gt_frame,
             w_align=100.0,
         )
 
         self.current_step += 1
-        frame_done = self.current_step >= self.steps_per_frame
+        # Warmup frames get warmup_steps, subsequent frames get steps_per_frame
+        max_steps = self.warmup_steps if is_warmup else self.steps_per_frame
+        frame_done = self.current_step >= max_steps
         video_done = False
 
         if frame_done:
@@ -129,8 +149,6 @@ class TemporalVideoLowLightEnv:
                 video_done = True
                 next_state = self._get_composite_state()
         else:
-            # Update delta with previous updated frame
-            self.delta_prev_updated = self.image_current - self.prev_enhanced_img
             next_state = self._get_composite_state()
 
         info = {

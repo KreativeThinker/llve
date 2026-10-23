@@ -8,9 +8,9 @@ def test_temporal_diff_model_forward():
     model = TemporalDiffRefLLENet(hidden_dim=32, num_actions=31)
     amp_cur = torch.rand(1, 3, 64, 64)
     amp_prev = torch.rand(1, 3, 64, 64)
-    d_prev = torch.rand(1, 3, 64, 64)
+    delta_raw = torch.rand(1, 3, 64, 64)
 
-    policy_logits, value = model(amp_cur, amp_prev, d_prev)
+    policy_logits, value = model(amp_cur, amp_prev, delta_raw)
     assert policy_logits.shape == (64 * 64, 31)
     assert value.shape == (64 * 64, 1)
 
@@ -24,7 +24,7 @@ def test_temporal_diff_model_10k_loader():
 
 def test_temporal_video_env():
     video_clip = torch.rand(4, 3, 64, 64)
-    env = TemporalVideoLowLightEnv(video_clip, steps_per_frame=2)
+    env = TemporalVideoLowLightEnv(video_clip, steps_per_frame=4, warmup_steps=6)
     init_state = env.reset_video()
 
     assert init_state.shape == (1, 9, 64, 64)
