@@ -8,7 +8,7 @@ class Encoder(nn.Module):
         self.conv1 = nn.Conv2d(input_channels, hidden_dim, kernel_size=3, padding=1)
         self.conv2 = nn.Conv2d(hidden_dim, hidden_dim, kernel_size=3, padding=1)
         self.conv3 = nn.Conv2d(hidden_dim, hidden_dim, kernel_size=3, padding=1)
-        self.relu = nn.ReLU()
+        self.relu = nn.ReLU(inplace=True)
 
     def forward(self, x):
         x = self.relu(self.conv1(x))
@@ -25,22 +25,26 @@ class RefLLENet(nn.Module):
 
         self.policy_head = nn.Sequential(
             nn.Conv2d(hidden_dim, hidden_dim, kernel_size=3, padding=1),
-            nn.ReLU(),
+            nn.ReLU(inplace=True),
             nn.Conv2d(hidden_dim, num_actions, kernel_size=1)
         )
 
         self.value_head = nn.Sequential(
             nn.Conv2d(hidden_dim, hidden_dim, kernel_size=3, padding=1),
-            nn.ReLU(),
+            nn.ReLU(inplace=True),
             nn.Conv2d(hidden_dim, 1, kernel_size=1)
         )
 
     def forward(self, x):
-        x = torch.log1p(x)
+        # Format input tensor to [B, 3, H, W]
         if x.ndim == 2:
-            x = x.unsqueeze(0).unsqueeze(0)
+            x = x.unsqueeze(0).unsqueeze(0).repeat(1, 3, 1, 1)
         elif x.ndim == 3:
+            if x.shape[0] == 1:
+                x = x.repeat(3, 1, 1)
             x = x.unsqueeze(0)
+        elif x.ndim == 4 and x.shape[1] == 1:
+            x = x.repeat(1, 3, 1, 1)
 
         enc = self.encoder(x)
 

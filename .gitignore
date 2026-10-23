@@ -8,3 +8,18 @@ wheels/
 
 # Virtual environments
 .venv
+
+# Data and large artifacts
+data/
+checkpoints/
+*.log
+test_*.png
+
+# Agent config files
+.claude/
+.gemini/
+.ignore
+.mcp.json
+
+# graft's local graph cache — regenerable, not committed (run `graft build`).
+/graft/

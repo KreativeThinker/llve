@@ -6,7 +6,7 @@ readme = "README.md"
 authors = [
     { name = "Anumeya", email = "sagely2005eagle@gmail.com" }
 ]
-requires-python = ">=3.13"
+requires-python = ">=3.9"
 dependencies = [
     "matplotlib",
     "notebook",
@@ -29,11 +29,4 @@ ref-lle-infer = "ref_lle.infer:main"
 requires = ["uv_build>=0.12.17,<0.13.0"]
 build-backend = "uv_build"
 
-[[tool.uv.index]]
-name = "pytorch-cu124"
-url = "https://download.pytorch.org/whl/cu124"
-explicit = true
 
-[tool.uv.sources]
-torch = { index = "pytorch-cu124" }
-torchvision = { index = "pytorch-cu124" }

@@ -7,6 +7,7 @@ from .utils import to_grayscale, to_numpy
 class QualityScorer(ABC):
     @abstractmethod
     def score(self, image):
+        """Score image quality. Higher is better. image shape: (h, w) or (c, h, w), vals [0,1]."""
         pass
 
 
@@ -71,11 +72,13 @@ class UniqueScorer(QualityScorer):
 
 
 def amplitude_exposure_reward(zfc_current, zfc_target=2.5e5):
+    """Paper Eq. (4): r^{amp}_t = | \bar{zfc} / zfc_t - 1 |"""
     diff = torch.abs(zfc_target / (zfc_current + 1e-8) - 1.0)
-    return -diff
+    return diff
 
 
 def image_quality_reward(scorer, image_current, image_initial=None, score_initial=None):
+    """Paper Eq. (3): r^{iq}_t = S(s_t) - S(s_0)"""
     score_current = scorer.score(image_current)
     if score_initial is None:
         score_initial = scorer.score(image_initial)
@@ -83,6 +86,7 @@ def image_quality_reward(scorer, image_current, image_initial=None, score_initia
 
 
 def combined_reward(scorer, image_current, image_initial=None, zfc_current=None, zfc_target=2.5e5, w_iq=1000, w_amp=60, score_initial=None):
+    """Paper Eq. (5): r_t = w_{iq} * r^{iq}_t - w_{amp} * r^{amp}_t"""
     r_iq = image_quality_reward(scorer, image_current, image_initial=image_initial, score_initial=score_initial)
     r_amp = amplitude_exposure_reward(zfc_current, zfc_target)
 
@@ -117,7 +121,7 @@ def temporal_video_reward(
     """
     device = image_current.device
     r_iq = image_quality_reward(scorer, image_current, image_initial=image_initial)
-    r_amp = amplitude_exposure_reward(zfc_current, zfc_target) if zfc_current is not None else torch.tensor(0.0, device=device)
+    r_amp = -amplitude_exposure_reward(zfc_current, zfc_target) if zfc_current is not None else torch.tensor(0.0, device=device)
 
     # Gain smoothness penalty
     if gain_current is not None and gain_prev is not None:
