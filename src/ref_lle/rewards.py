@@ -1,40 +1,52 @@
 import torch
 from abc import ABC, abstractmethod
 import numpy as np
-from .utils import to_grayscale
+from .utils import to_grayscale, to_numpy
 
 
 class QualityScorer(ABC):
     @abstractmethod
     def score(self, image):
-        """Score image quality. Higher is better. image shape: (h, w) or (c, h, w), vals [0,1]."""
         pass
 
 
 class ProxyQualityScorer(QualityScorer):
     def score(self, image):
-        image = to_grayscale(image)
-        h, w = image.shape
+        img_np = to_numpy(image)
+        if img_np.ndim == 4:
+            img_np = img_np[0]
+        if img_np.ndim == 3:
+            img_np = np.mean(img_np, axis=0)
+
+        h, w = img_np.shape
         center_h, center_w = h // 2, w // 2
-        window_size = min(h, w) // 4
-        window = image[
-            center_h - window_size:center_h + window_size,
-            center_w - window_size:center_w + window_size
+        window_size = max(1, min(h, w) // 4)
+        window = img_np[
+            center_h - window_size : center_h + window_size,
+            center_w - window_size : center_w + window_size,
         ]
 
-        contrast = np.std(window)
-        brightness = np.mean(window)
-        return float(contrast + 0.5 * brightness)
+        contrast = float(np.std(window))
+        brightness = float(np.mean(window))
+        return contrast + 0.5 * brightness
 
 
 class UniqueScorer(QualityScorer):
     def __init__(self, device='cpu'):
-        import pyiqa
-        # Load the pyiqa UNIQUE metric
-        self.metric = pyiqa.create_metric('unique', device=device)
         self.device = device
+        self.has_pyiqa = False
+        self.fallback = ProxyQualityScorer()
+        try:
+            import pyiqa
+            self.metric = pyiqa.create_metric('unique', device=device)
+            self.has_pyiqa = True
+        except Exception:
+            self.has_pyiqa = False
         
     def score(self, image):
+        if not self.has_pyiqa:
+            return self.fallback.score(image)
+
         if not isinstance(image, torch.Tensor):
             image = torch.tensor(image, dtype=torch.float32)
             
@@ -63,15 +75,75 @@ def amplitude_exposure_reward(zfc_current, zfc_target=2.5e5):
     return -diff
 
 
-def image_quality_reward(scorer, image_current, image_initial):
+def image_quality_reward(scorer, image_current, image_initial=None, score_initial=None):
     score_current = scorer.score(image_current)
-    score_initial = scorer.score(image_initial)
+    if score_initial is None:
+        score_initial = scorer.score(image_initial)
     return score_current - score_initial
 
 
-def combined_reward(scorer, image_current, image_initial, zfc_current, zfc_target=2.5e5, w_iq=1000, w_amp=60):
-    r_iq = image_quality_reward(scorer, image_current, image_initial)
+def combined_reward(scorer, image_current, image_initial=None, zfc_current=None, zfc_target=2.5e5, w_iq=1000, w_amp=60, score_initial=None):
+    r_iq = image_quality_reward(scorer, image_current, image_initial=image_initial, score_initial=score_initial)
     r_amp = amplitude_exposure_reward(zfc_current, zfc_target)
 
     r_total = w_iq * r_iq - w_amp * r_amp
     return r_total
+
+
+def temporal_video_reward(
+    scorer,
+    image_current,
+    image_initial,
+    prev_enhanced_img=None,
+    prev_input_img=None,
+    gain_current=None,
+    gain_prev=None,
+    zfc_current=None,
+    zfc_target=2.5e5,
+    w_iq=100.0,
+    w_amp=20.0,
+    w_gain=15.0,
+    w_diff=25.0,
+    gt_image=None,
+    w_align=50.0,
+):
+    """
+    Temporal video reward incorporating:
+      - Perceptual quality improvement (r_iq)
+      - Exposure alignment with ZFC target (r_amp)
+      - Gain smoothness penalty (||G_t - G_{t-1}^*||^2)
+      - Motion-aware photometric temporal difference penalty (||(I_t - I_{t-1}^*) - (I_t^raw - I_{t-1}^raw)||_1)
+      - Supervised ground-truth alignment (if available)
+    """
+    device = image_current.device
+    r_iq = image_quality_reward(scorer, image_current, image_initial=image_initial)
+    r_amp = amplitude_exposure_reward(zfc_current, zfc_target) if zfc_current is not None else torch.tensor(0.0, device=device)
+
+    # Gain smoothness penalty
+    if gain_current is not None and gain_prev is not None:
+        gain_penalty = torch.mean((gain_current - gain_prev) ** 2)
+    else:
+        gain_penalty = torch.tensor(0.0, device=device)
+
+    # Motion-aware photometric temporal difference penalty
+    if prev_enhanced_img is not None and prev_input_img is not None:
+        enh_diff = image_current - prev_enhanced_img
+        raw_diff = image_initial - prev_input_img
+        temp_diff_penalty = torch.mean(torch.abs(enh_diff - raw_diff))
+    else:
+        temp_diff_penalty = torch.tensor(0.0, device=device)
+
+    # Ground-truth alignment reward
+    if gt_image is not None:
+        align_rew = -torch.mean(torch.abs(image_current - gt_image))
+    else:
+        align_rew = torch.tensor(0.0, device=device)
+
+    total_reward = (
+        w_iq * r_iq
+        + w_amp * r_amp
+        - w_gain * gain_penalty
+        - w_diff * temp_diff_penalty
+        + w_align * align_rew
+    )
+    return total_reward
