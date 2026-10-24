@@ -271,6 +271,24 @@ def enhance_sdsd_video(
     save_video_mp4(mp4_enh_path, enh_frames_u8, fps=fps)
     print(f"Saved enhanced video to: {mp4_enh_path}")
 
+    res = {
+        "scene": scene,
+        "raw_in_mean": float(np.mean(raw_in)),
+        "enhanced_mean": float(np.mean(enhanced_frames)),
+        "flicker_in": flicker_in,
+        "flicker_enh": flicker_enh,
+        "tce_in": tce_in,
+        "tce_enh": tce_enh,
+    }
+    if raw_gt:
+        res.update({
+            "psnr_in": float(psnr_in),
+            "psnr_enh": float(psnr_enh),
+            "ssim_in": float(ssim_in),
+            "ssim_enh": float(ssim_enh),
+        })
+    return res
+
 
 def main():
     parser = argparse.ArgumentParser(description="Enhance low-light video with motion-consistent temporal consistency.")
