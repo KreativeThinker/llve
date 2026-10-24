@@ -62,3 +62,20 @@ def test_sdsd_video_dataset_init():
     assert len(ds) >= 1
     clip_in, clip_gt = ds[0]
     assert clip_in.shape == (4, 3, 128, 128)
+
+
+def test_resolve_sdsd_input_and_scene(tmp_path):
+    from ref_lle.infer_video import resolve_sdsd_input_and_scene
+    fake_root = tmp_path / "sdsd_fake"
+    in_dir = fake_root / "input" / "test_scene"
+    in_dir.mkdir(parents=True)
+    (in_dir / "0001.npy").write_bytes(b"dummy")
+
+    resolved_in, resolved_gt, scene = resolve_sdsd_input_and_scene(data_root=str(fake_root), scene="test_scene")
+    assert resolved_in == in_dir
+    assert scene == "test_scene"
+
+    # Test auto-fallback if requested scene doesn't exist
+    resolved_in2, _, scene2 = resolve_sdsd_input_and_scene(data_root=str(fake_root), scene="nonexistent")
+    assert resolved_in2 == in_dir
+    assert scene2 == "test_scene"

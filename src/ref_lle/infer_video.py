@@ -33,7 +33,58 @@ def compute_temporal_consistency_error(frames):
     return float(np.mean(errors))
 
 
+def resolve_sdsd_input_and_scene(data_root=None, scene="pair1"):
+    candidates = []
+    if data_root is not None:
+        p = Path(data_root)
+        candidates.extend([p, p / "indoor_np", p / "input"])
+    candidates.extend([
+        Path("data/sdsd/indoor_np"),
+        Path("data/sdsd/indoor_np/indoor_np"),
+        Path("data/sdsd"),
+    ])
+
+    input_base = None
+    gt_base = None
+
+    for c in candidates:
+        if (c / "input").exists():
+            input_base = c / "input"
+            gt_base = (c / "GT") if (c / "GT").exists() else None
+            break
+        elif c.name == "input" and c.exists():
+            input_base = c
+            gt_base = (c.parent / "GT") if (c.parent / "GT").exists() else None
+            break
+
+    if input_base is None or not input_base.exists():
+        tried = [str(c) for c in candidates]
+        raise FileNotFoundError(
+            f"SDSD input directory not found. Searched candidates: {tried}\n"
+            f"Please specify --data-root pointing to the SDSD directory containing 'input/'."
+        )
+
+    available_scenes = sorted([d.name for d in input_base.iterdir() if d.is_dir()])
+    if not available_scenes:
+        direct_files = list(input_base.glob("*.npy")) + list(input_base.glob("*.png"))
+        if direct_files:
+            return input_base, gt_base, "root"
+        raise FileNotFoundError(f"No scene subdirectories or frame files found in '{input_base}'.")
+
+    if scene not in available_scenes:
+        print(f"Notice: Scene '{scene}' not found in '{input_base}'.")
+        print(f"Available scenes: {available_scenes}")
+        selected = available_scenes[0]
+        print(f"Auto-selected available scene: '{selected}'")
+        scene = selected
+
+    in_dir = input_base / scene
+    gt_dir = (gt_base / scene) if (gt_base and (gt_base / scene).exists()) else None
+    return in_dir, gt_dir, scene
+
+
 def enhance_sdsd_video(
+    data_root=None,
     scene="pair1",
     num_frames=12,
     downsample=2,
@@ -46,13 +97,22 @@ def enhance_sdsd_video(
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    in_dir = Path(f"data/sdsd/indoor_np/indoor_np/input/{scene}")
-    gt_dir = Path(f"data/sdsd/indoor_np/indoor_np/GT/{scene}")
+    in_dir, gt_dir, scene = resolve_sdsd_input_and_scene(data_root=data_root, scene=scene)
 
-    assert in_dir.exists(), f"Input directory {in_dir} not found!"
+    in_files = sorted(in_dir.glob("*.npy"))
+    if not in_files:
+        in_files = sorted(in_dir.glob("*.png")) + sorted(in_dir.glob("*.jpg"))
+    in_files = in_files[:num_frames]
 
-    in_files = sorted(in_dir.glob("*.npy"))[:num_frames]
-    gt_files = sorted(gt_dir.glob("*.npy"))[:num_frames] if gt_dir.exists() else []
+    if not in_files:
+        raise RuntimeError(f"No .npy or image frames found in {in_dir}")
+
+    gt_files = []
+    if gt_dir and gt_dir.exists():
+        gt_files = sorted(gt_dir.glob("*.npy"))
+        if not gt_files:
+            gt_files = sorted(gt_dir.glob("*.png")) + sorted(gt_dir.glob("*.jpg"))
+        gt_files = gt_files[:num_frames]
 
     print(f"Loading {len(in_files)} frames from SDSD scene: {scene}...")
     raw_in = [load_frame_npy_or_img(f, downsample=downsample) for f in in_files]
@@ -204,6 +264,7 @@ def enhance_sdsd_video(
 
 def main():
     parser = argparse.ArgumentParser(description="Enhance low-light video with motion-consistent temporal consistency.")
+    parser.add_argument("--data-root", default=None, type=str, help="Path to SDSD dataset root directory (e.g. data/sdsd/indoor_np)")
     parser.add_argument("--scene", default="pair1", type=str)
     parser.add_argument("--num-frames", default=12, type=int)
     parser.add_argument("--downsample", default=2, type=int)
@@ -215,6 +276,7 @@ def main():
     args = parser.parse_args()
 
     enhance_sdsd_video(
+        data_root=args.data_root,
         scene=args.scene,
         num_frames=args.num_frames,
         downsample=args.downsample,
