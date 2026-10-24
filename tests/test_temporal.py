@@ -54,3 +54,11 @@ def test_temporal_video_reward():
         zfc_current=torch.tensor(1.0),
     )
     assert isinstance(reward, torch.Tensor)
+
+
+def test_sdsd_video_dataset_init():
+    from ref_lle.video_data import SDSDVideoDataset
+    ds = SDSDVideoDataset(root_dir="data/sdsd/indoor_np", clip_len=4)
+    assert len(ds) >= 1
+    clip_in, clip_gt = ds[0]
+    assert clip_in.shape == (4, 3, 128, 128)

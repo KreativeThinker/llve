@@ -37,15 +37,31 @@ class SDSDVideoDataset:
     """
     def __init__(
         self,
-        input_dir="data/sdsd/indoor_np/indoor_np/input",
-        gt_dir="data/sdsd/indoor_np/indoor_np/GT",
+        root_dir=None,
+        input_dir=None,
+        gt_dir=None,
         clip_len=4,
         downsample=4,
         max_scenes=10,
         preload_to_ram=True,
+        data_root=None,
     ):
-        self.input_dir = Path(input_dir)
-        self.gt_dir = Path(gt_dir)
+        base_dir = root_dir or data_root
+        if base_dir is not None:
+            base_path = Path(base_dir)
+            if (base_path / "input").exists() and (base_path / "GT").exists():
+                self.input_dir = base_path / "input"
+                self.gt_dir = base_path / "GT"
+            elif (base_path / "indoor_np" / "input").exists() and (base_path / "indoor_np" / "GT").exists():
+                self.input_dir = base_path / "indoor_np" / "input"
+                self.gt_dir = base_path / "indoor_np" / "GT"
+            else:
+                self.input_dir = base_path / "input"
+                self.gt_dir = base_path / "GT"
+        else:
+            self.input_dir = Path(input_dir or "data/sdsd/indoor_np/indoor_np/input")
+            self.gt_dir = Path(gt_dir or "data/sdsd/indoor_np/indoor_np/GT")
+
         self.clip_len = clip_len
         self.downsample = downsample
         self.preload_to_ram = preload_to_ram
