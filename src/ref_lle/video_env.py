@@ -85,11 +85,11 @@ class TemporalVideoLowLightEnv:
         return self._get_composite_state()
 
     def _get_composite_state(self):
-        # 9-channel motion-consistent composite state:
-        # [log1p(A_t), log1p(A^*_{t-1}), Delta_raw = (I_t^raw - I_{t-1}^raw)]
+        # 9-channel motion-consistent spatial composite state:
+        # [I_t (current spatial RGB), \hat{I}_{t-1}^* (previous enhanced spatial RGB), \Delta_raw = (I_t^raw - I_{t-1}^raw)]
         return torch.cat([
-            torch.log1p(self.amp_current),
-            torch.log1p(self.prev_enhanced_amp),
+            self.image_current,
+            self.prev_enhanced_img,
             self.delta_raw_motion,
         ], dim=1)
 

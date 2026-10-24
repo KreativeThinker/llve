@@ -180,40 +180,31 @@ def enhance_sdsd_video(
         t_cur = torch.from_numpy(np.transpose(cur_img, (2, 0, 1))).unsqueeze(0).float().to(device)
         amp_0, pha_0 = amplitude_phase_split(t_cur)
         amp_cur = amp_0.clone()
+        img_step = t_cur.clone()
 
         if prev_enhanced_img is None:
-            # First frame: no previous frame exists
-            prev_enhanced_amp = amp_0.clone()
+            # First frame: initialize reference with raw input
+            prev_enhanced_img = t_cur.clone()
             delta_raw_motion = torch.zeros_like(t_cur)
         else:
             # Physical camera motion between raw frames (I_t^raw - I_{t-1}^raw)
             delta_raw_motion = t_cur - prev_raw_img
 
-        # Frames 0 and 1 receive full warmup_steps, subsequent frames receive steps_per_frame
+        # Frames 0 and 1 receive warmup_steps, subsequent frames receive steps_per_frame
         is_warmup = t < 2
         steps = warmup_steps if is_warmup else steps_per_frame
 
         cum_gain = torch.ones_like(amp_cur)
 
         for step in range(steps):
-            # 9-channel motion-consistent composite input: [A_t, A^*_{t-1}, Delta_raw]
-            comp_state = torch.cat([torch.log1p(amp_cur), torch.log1p(prev_enhanced_amp), delta_raw_motion], dim=1)
+            # 9-channel motion-consistent spatial composite input: [I_t, \hat{I}_{t-1}^*, \Delta_raw]
+            comp_state = torch.cat([img_step, prev_enhanced_img, delta_raw_motion], dim=1)
 
             with torch.no_grad():
                 logits, _ = model(comp_state)
-                action = torch.argmax(logits, dim=1).reshape(1, H, W)
+                action_map = torch.argmax(logits, dim=1).reshape(1, H, W)
 
-            zfc_cur = zero_frequency_component(amp_cur).mean().item()
-            ratio = zfc_target / (zfc_cur + 1e-8)
-            remaining_steps = max(1, steps - step)
-            target_alpha = np.clip(np.log(ratio) / remaining_steps, alpha_min, alpha_max)
-            act_idx_target = int(round((target_alpha - alpha_min) / alpha_step))
-            act_idx_target = min(max(act_idx_target, 0), 30)
-
-            # Smoothly guide policy towards target ZFC
-            action_map = (0.6 * action.float() + 0.4 * act_idx_target).round().clamp(0, 30)
-
-            alphas = alpha_min + action_map * alpha_step
+            alphas = alpha_min + action_map.float() * alpha_step
             step_gain = torch.exp(alphas).unsqueeze(1)  # (1, 1, H, W)
 
             amp_cur = amp_cur * step_gain
@@ -223,7 +214,7 @@ def enhance_sdsd_video(
             img_step = torch.clamp(img_step, 0.0, 1.0)
 
             zfc_cur = zero_frequency_component(amp_cur).mean().item()
-            if abs(zfc_cur - zfc_target) / zfc_target < 0.08:
+            if abs(zfc_cur - zfc_target) / (zfc_target + 1e-8) < 0.08:
                 break
 
         final_frame = np.transpose(img_step.squeeze(0).cpu().numpy(), (1, 2, 0))
@@ -231,7 +222,6 @@ def enhance_sdsd_video(
 
         # Update previous frame history for t + 1
         prev_enhanced_img = img_step.detach().clone()
-        prev_enhanced_amp = amp_cur.detach().clone()
         prev_raw_img = t_cur.detach().clone()
 
         if raw_gt:
