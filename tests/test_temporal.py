@@ -79,3 +79,13 @@ def test_resolve_sdsd_input_and_scene(tmp_path):
     resolved_in2, _, scene2 = resolve_sdsd_input_and_scene(data_root=str(fake_root), scene="nonexistent")
     assert resolved_in2 == in_dir
     assert scene2 == "test_scene"
+
+
+def test_save_video_mp4(tmp_path):
+    from ref_lle.infer_video import save_video_mp4
+    import numpy as np
+    mp4_file = tmp_path / "test_out.mp4"
+    frames = [np.zeros((64, 64, 3), dtype=np.uint8) for _ in range(4)]
+    save_video_mp4(mp4_file, frames, fps=8)
+    assert mp4_file.exists()
+    assert mp4_file.stat().st_size > 0

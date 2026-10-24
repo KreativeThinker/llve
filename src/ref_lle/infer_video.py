@@ -33,6 +33,20 @@ def compute_temporal_consistency_error(frames):
     return float(np.mean(errors))
 
 
+def save_video_mp4(path, frames, fps=10):
+    path = Path(path)
+    try:
+        imageio.mimsave(str(path), frames, fps=fps)
+    except Exception:
+        import cv2
+        h, w = frames[0].shape[:2]
+        fourcc = cv2.VideoWriter_fourcc(*'mp4v')
+        out = cv2.VideoWriter(str(path), fourcc, fps, (w, h))
+        for f in frames:
+            out.write(cv2.cvtColor(f, cv2.COLOR_RGB2BGR))
+        out.release()
+
+
 def resolve_sdsd_input_and_scene(data_root=None, scene="pair1"):
     candidates = []
     if data_root is not None:
@@ -92,6 +106,7 @@ def enhance_sdsd_video(
     output_dir="data/sdsd",
     steps_per_frame=10,
     warmup_steps=14,
+    fps=10,
     device="cpu",
 ):
     output_dir = Path(output_dir)
@@ -245,7 +260,8 @@ def enhance_sdsd_video(
     print(f"Flicker Index:       {flicker_in:.5f} ==> {flicker_enh:.5f}")
     print(f"Temporal Accel Err:  {tce_in:.5f} ==> {tce_enh:.5f}")
 
-    # Export side-by-side video preview
+    # Export videos as MP4
+    mp4_preview_path = output_dir / f"enhanced_{scene}_preview.mp4"
     preview_frames = []
     for t in range(T):
         in_u8 = (np.clip(raw_in[t], 0, 1) * 255).astype(np.uint8)
@@ -257,9 +273,13 @@ def enhance_sdsd_video(
             row = np.concatenate([in_u8, enh_u8], axis=1)
         preview_frames.append(row)
 
-    gif_path = output_dir / f"enhanced_{scene}_preview.gif"
-    imageio.mimsave(gif_path, preview_frames, fps=4, loop=0)
-    print(f"\nSaved side-by-side enhanced GIF to: {gif_path}")
+    save_video_mp4(mp4_preview_path, preview_frames, fps=fps)
+    print(f"\nSaved side-by-side comparison video to: {mp4_preview_path}")
+
+    mp4_enh_path = output_dir / f"enhanced_{scene}.mp4"
+    enh_frames_u8 = [(np.clip(f, 0, 1) * 255).astype(np.uint8) for f in enhanced_frames]
+    save_video_mp4(mp4_enh_path, enh_frames_u8, fps=fps)
+    print(f"Saved enhanced video to: {mp4_enh_path}")
 
 
 def main():
@@ -272,6 +292,7 @@ def main():
     parser.add_argument("--output-dir", default="data/sdsd", type=str)
     parser.add_argument("--steps-per-frame", default=10, type=int)
     parser.add_argument("--warmup-steps", default=14, type=int)
+    parser.add_argument("--fps", default=10, type=int, help="Frames per second for output MP4 videos")
     parser.add_argument("--device", default="cpu", type=str)
     args = parser.parse_args()
 
@@ -284,6 +305,7 @@ def main():
         output_dir=args.output_dir,
         steps_per_frame=args.steps_per_frame,
         warmup_steps=args.warmup_steps,
+        fps=args.fps,
         device=args.device,
     )
 
